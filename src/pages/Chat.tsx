@@ -1,15 +1,31 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { LogOut, User as UserIcon, Layers, Terminal } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { useAppDispatch } from '../store';
+import { useAppDispatch, useAppSelector } from '../store';
 import { loadSessions, setAgentToken, setActiveSession, loadSessionHistory, prependSession } from '../store/chatSlice';
 import { fetchAccessToken } from '../api/agent';
 import ChatSidebar from '../components/ChatSidebar';
 import ChatWindow from '../components/ChatWindow';
+import ZohoDetailPopup from '../components/ZohoDetailPopup';
 
 export const Chat: React.FC = () => {
   const dispatch = useAppDispatch();
   const { user, logout } = useAuth();
+  const { agentToken } = useAppSelector((state) => state.chat);
+  
+  const [activePopup, setActivePopup] = useState<{ type: 'project' | 'task' | 'member'; projectId: string; taskId?: string } | null>(null);
+
+  useEffect(() => {
+    const handleOpenPopup = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setActivePopup(detail);
+    };
+    window.addEventListener('open-zoho-popup', handleOpenPopup);
+    return () => {
+      window.removeEventListener('open-zoho-popup', handleOpenPopup);
+    };
+  }, []);
+
 
   useEffect(() => {
     // Fetch raw JWT token from auth-service (needed for agent WS + API calls)
@@ -100,6 +116,17 @@ export const Chat: React.FC = () => {
         <div className="flex flex-1 min-h-0">
           <ChatWindow />
         </div>
+
+        {/* ── Interactive Detail Popup ──────────────────────────── */}
+        {activePopup && agentToken && (
+          <ZohoDetailPopup
+            type={activePopup.type}
+            projectId={activePopup.projectId}
+            taskId={activePopup.taskId}
+            token={agentToken}
+            onClose={() => setActivePopup(null)}
+          />
+        )}
       </div>
     </div>
   );

@@ -183,11 +183,11 @@ function renderMarkdown(text: string): React.ReactNode[] {
   return nodes;
 }
 
-// Inline formatting: **bold**, *italic*, `code`
+// Inline formatting: **bold**, *italic*, `code`, and markdown links [text](link)
 function inlineFormat(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
-  // regex handles **bold**, *italic*, `code`
-  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g;
+  // regex handles **bold**, *italic*, `code`, and [text](link)
+  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
@@ -202,12 +202,76 @@ function inlineFormat(text: string): React.ReactNode[] {
           {m[4]}
         </code>
       );
+    } else if (m[5] !== undefined && m[6] !== undefined) {
+      const linkText = m[5];
+      const url = m[6];
+      if (url.startsWith('project://')) {
+        const projectId = url.replace('project://', '');
+        parts.push(
+          <button
+            key={m.index}
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('open-zoho-popup', {
+                detail: { type: 'project', projectId }
+              }));
+            }}
+            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer align-baseline"
+          >
+            📁 {linkText}
+          </button>
+        );
+      } else if (url.startsWith('task://')) {
+        const path = url.replace('task://', '');
+        const [projectId, taskId] = path.split('/');
+        parts.push(
+          <button
+            key={m.index}
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('open-zoho-popup', {
+                detail: { type: 'task', projectId, taskId }
+              }));
+            }}
+            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer align-baseline"
+          >
+            ✓ {linkText}
+          </button>
+        );
+      } else if (url.startsWith('member://')) {
+        const path = url.replace('member://', '');
+        const [projectId, memberId] = path.split('/');
+        parts.push(
+          <button
+            key={m.index}
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('open-zoho-popup', {
+                detail: { type: 'member', projectId, taskId: memberId }
+              }));
+            }}
+            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer align-baseline"
+          >
+            👤 {linkText}
+          </button>
+        );
+      } else {
+        parts.push(
+          <a
+            key={m.index}
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-indigo-400 hover:text-indigo-300 underline font-semibold transition-all"
+          >
+            {linkText}
+          </a>
+        );
+      }
     }
     last = m.index + m[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));
   return parts;
 }
+
 
 // ---------------------------------------------------------------------------
 // ThinkingIndicator — pulsing brain animation
