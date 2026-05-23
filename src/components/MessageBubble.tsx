@@ -1,0 +1,404 @@
+import React, { useMemo, useEffect, useState, useRef } from 'react';
+import { Bot, User as UserIcon } from 'lucide-react';
+
+// Inject keyframe animations once into <head> — never re-runs
+let _stylesInjected = false;
+function injectGlobalStyles() {
+  if (_stylesInjected || typeof document === 'undefined') return;
+  _stylesInjected = true;
+  const s = document.createElement('style');
+  s.textContent = `
+    @keyframes thinking-bounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-6px); opacity: 1; }
+    }
+    @keyframes cursor-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    @keyframes msg-fade-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes letter-fade-in {
+      from {
+        opacity: 0;
+        filter: blur(1.5px);
+        transform: translateY(2px);
+      }
+      to {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0);
+      }
+    }
+    .typewriter-cursor::after {
+      content: '\u258c';
+      display: inline-block;
+      margin-left: 1px;
+      color: #818cf8;
+      animation: cursor-blink 0.7s step-end infinite;
+    }
+    .msg-bubble-enter {
+      animation: msg-fade-in 0.22s ease-out both;
+    }
+  `;
+  document.head.appendChild(s);
+}
+
+interface MessageBubbleProps {
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: string;
+  isStreaming?: boolean;
+  isThinking?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Minimal markdown renderer: bold, inline-code, code blocks, line-breaks
+// ---------------------------------------------------------------------------
+function renderMarkdown(text: string): React.ReactNode[] {
+  const lines = text.split('\n');
+  const nodes: React.ReactNode[] = [];
+  let codeBuffer: string[] = [];
+  let inCode = false;
+  let codeLang = '';
+
+  const flushCode = (key: number) => {
+    nodes.push(
+      <div
+        key={`code-${key}`}
+        className="my-2 rounded-xl border border-slate-700/60 bg-[#0d1117] overflow-x-auto"
+      >
+        {codeLang && (
+          <div className="px-4 py-1.5 border-b border-slate-700/50 text-[10px] font-mono text-indigo-400 uppercase tracking-widest">
+            {codeLang}
+          </div>
+        )}
+        <pre className="px-4 py-3 text-xs font-mono text-slate-300 leading-relaxed whitespace-pre">
+          {codeBuffer.join('\n')}
+        </pre>
+      </div>
+    );
+    codeBuffer = [];
+    codeLang = '';
+  };
+
+  lines.forEach((line, i) => {
+    // ── Code fence ────────────────────────────────────────────────────────
+    if (line.startsWith('```')) {
+      if (!inCode) {
+        inCode = true;
+        codeLang = line.slice(3).trim();
+      } else {
+        inCode = false;
+        flushCode(i);
+      }
+      return;
+    }
+    if (inCode) {
+      codeBuffer.push(line);
+      return;
+    }
+
+    // ── Headings ──────────────────────────────────────────────────────────
+    if (line.startsWith('### ')) {
+      nodes.push(
+        <p key={i} className="mt-3 mb-1 text-sm font-bold text-slate-100">
+          {inlineFormat(line.slice(4))}
+        </p>
+      );
+      return;
+    }
+    if (line.startsWith('## ')) {
+      nodes.push(
+        <p key={i} className="mt-3 mb-1 text-sm font-bold text-indigo-300">
+          {inlineFormat(line.slice(3))}
+        </p>
+      );
+      return;
+    }
+
+    // ── Bullet list ───────────────────────────────────────────────────────
+    if (/^[-*]\s/.test(line)) {
+      nodes.push(
+        <div key={i} className="flex items-start gap-2 my-0.5">
+          <span className="mt-[5px] h-1.5 w-1.5 rounded-full bg-indigo-400 shrink-0" />
+          <span className="text-sm leading-relaxed">{inlineFormat(line.slice(2))}</span>
+        </div>
+      );
+      return;
+    }
+
+    // ── Numbered list ─────────────────────────────────────────────────────
+    const numMatch = line.match(/^(\d+)\.\s(.*)/);
+    if (numMatch) {
+      nodes.push(
+        <div key={i} className="flex items-start gap-2 my-0.5">
+          <span className="text-xs text-indigo-400 font-mono mt-0.5 shrink-0 w-4">{numMatch[1]}.</span>
+          <span className="text-sm leading-relaxed">{inlineFormat(numMatch[2])}</span>
+        </div>
+      );
+      return;
+    }
+
+    // ── Empty line → spacer ───────────────────────────────────────────────
+    if (line.trim() === '') {
+      nodes.push(<div key={i} className="h-2" />);
+      return;
+    }
+
+    // ── Normal paragraph ──────────────────────────────────────────────────
+    nodes.push(
+      <p key={i} className="text-sm leading-relaxed">
+        {inlineFormat(line)}
+      </p>
+    );
+  });
+
+  // flush unclosed code block
+  if (inCode && codeBuffer.length > 0) flushCode(99999);
+
+  return nodes;
+}
+
+// Inline formatting: **bold**, *italic*, `code`
+function inlineFormat(text: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  // regex handles **bold**, *italic*, `code`
+  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    if (m[2] !== undefined) {
+      parts.push(<strong key={m.index} className="font-semibold text-slate-100">{m[2]}</strong>);
+    } else if (m[3] !== undefined) {
+      parts.push(<em key={m.index} className="italic text-slate-300">{m[3]}</em>);
+    } else if (m[4] !== undefined) {
+      parts.push(
+        <code key={m.index} className="rounded px-1.5 py-0.5 bg-slate-700/70 text-indigo-300 text-[11px] font-mono">
+          {m[4]}
+        </code>
+      );
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+// ---------------------------------------------------------------------------
+// ThinkingIndicator — pulsing brain animation
+// ---------------------------------------------------------------------------
+const ThinkingIndicator: React.FC = () => (
+  <div className="flex items-center gap-3 px-4 py-3">
+    <div className="flex items-center gap-1.5">
+      <span
+        className="h-2 w-2 rounded-full bg-indigo-400"
+        style={{ animation: 'thinking-bounce 1.2s ease-in-out infinite', animationDelay: '0s' }}
+      />
+      <span
+        className="h-2 w-2 rounded-full bg-indigo-400"
+        style={{ animation: 'thinking-bounce 1.2s ease-in-out infinite', animationDelay: '0.2s' }}
+      />
+      <span
+        className="h-2 w-2 rounded-full bg-indigo-400"
+        style={{ animation: 'thinking-bounce 1.2s ease-in-out infinite', animationDelay: '0.4s' }}
+      />
+    </div>
+    <span className="text-xs text-slate-500 font-medium tracking-wide animate-pulse">
+      Thinking…
+    </span>
+  </div>
+);
+
+// ---------------------------------------------------------------------------
+// StreamingLetterRenderer — types letter-by-letter with a fade-in animation
+// ---------------------------------------------------------------------------
+interface StreamingLetterRendererProps {
+  text: string;
+  isStreamActive: boolean;
+  onComplete: () => void;
+}
+
+const StreamingLetterRenderer: React.FC<StreamingLetterRendererProps> = ({
+  text,
+  isStreamActive,
+  onComplete,
+}) => {
+  const [displayedChars, setDisplayedChars] = useState<string[]>([]);
+  const queueRef = useRef<string[]>([]);
+  const indexRef = useRef<number>(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Use refs to keep callbacks and active state up to date inside the ticking interval
+  const onCompleteRef = useRef(onComplete);
+  const isStreamActiveRef = useRef(isStreamActive);
+
+  // Safely sync callback and streaming active status inside effects
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+    isStreamActiveRef.current = isStreamActive;
+  }, [onComplete, isStreamActive]);
+
+  // Sync incoming text chunks with the character queue
+  useEffect(() => {
+    const rawChars = Array.from(text);
+    const currentLength = indexRef.current;
+    if (rawChars.length > currentLength) {
+      const newChars = rawChars.slice(currentLength);
+      queueRef.current.push(...newChars);
+      indexRef.current = rawChars.length;
+    }
+  }, [text]);
+
+  // Typing engine with dynamic delay to prevent lagging behind fast streams
+  useEffect(() => {
+    const tick = () => {
+      if (queueRef.current.length > 0) {
+        const nextChar = queueRef.current.shift()!;
+        setDisplayedChars((prev) => [...prev, nextChar]);
+
+        const qLen = queueRef.current.length;
+        let delay = 35; // Default slow and smooth speed (35ms/letter)
+        if (qLen > 30) {
+          delay = 4; // Catch up almost instantly
+        } else if (qLen > 15) {
+          delay = 10; // Catch up rapidly
+        } else if (qLen > 5) {
+          delay = 20; // Catch up gently
+        }
+
+        timerRef.current = setTimeout(tick, delay);
+      } else {
+        // Queue is fully typed out
+        if (!isStreamActiveRef.current) {
+          // If the stream is also done, trigger onComplete so parent switches to static markdown
+          onCompleteRef.current();
+        } else {
+          // Stream is still active, poll again shortly for new chunks
+          timerRef.current = setTimeout(tick, 50);
+        }
+      }
+    };
+
+    timerRef.current = setTimeout(tick, 35);
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  return (
+    <span className="text-sm leading-relaxed whitespace-pre-wrap wrap-break-word">
+      {displayedChars.map((char, idx) => (
+        <span
+          key={idx}
+          style={{
+            display: char === ' ' || char === '\n' ? 'inline' : 'inline-block',
+            whiteSpace: 'pre-wrap',
+            animation: 'letter-fade-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+            opacity: 0,
+          }}
+        >
+          {char}
+        </span>
+      ))}
+    </span>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+export const MessageBubble: React.FC<MessageBubbleProps> = ({
+  role,
+  text,
+  timestamp,
+  isStreaming = false,
+  isThinking = false,
+}) => {
+  const isUser = role === 'user';
+  const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  // Track if we are currently typewriter animating.
+  // If the bubble starts as a finalized message (e.g. loading past history), typing is immediately complete.
+  const [isTypingComplete, setIsTypingComplete] = useState(!isStreaming);
+
+  const [prevIsStreaming, setPrevIsStreaming] = useState(isStreaming);
+
+  // Adjust state in render if isStreaming changes to avoid cascading effect renders
+  if (isStreaming !== prevIsStreaming) {
+    setPrevIsStreaming(isStreaming);
+    if (isStreaming) {
+      setIsTypingComplete(false);
+    }
+  }
+
+  // Inject global styles once on first mount
+  useEffect(() => { injectGlobalStyles(); }, []);
+
+  // While streaming or typing animation is in progress, render plain text with animated character inserts.
+  // Once the character queue finishes and stream is done, switch to markdown parsing.
+  const renderedContent = useMemo(() => {
+    if (isUser) return <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>;
+    if (!isTypingComplete) {
+      return (
+        <StreamingLetterRenderer
+          text={text}
+          isStreamActive={isStreaming}
+          onComplete={() => setIsTypingComplete(true)}
+        />
+      );
+    }
+    return renderMarkdown(text);
+  }, [text, isUser, isTypingComplete, isStreaming]);
+
+  return (
+    <div
+      className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} items-end msg-bubble-enter`}
+    >
+        {/* Avatar */}
+        <div
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ring-1 ${
+            isUser
+              ? 'bg-indigo-600/20 ring-indigo-500/40 text-indigo-300'
+              : 'bg-slate-800 ring-slate-700 text-indigo-400'
+          }`}
+        >
+          {isUser ? <UserIcon className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+        </div>
+
+        {/* Bubble */}
+        <div className={`flex flex-col gap-1 max-w-2xl ${isUser ? 'items-end' : 'items-start'}`}>
+          <div
+            className={`relative rounded-2xl shadow-md ${
+              isUser
+                ? 'bg-linear-to-br from-indigo-600 to-indigo-700 text-white rounded-br-sm px-4 py-3'
+                : 'bg-slate-900/80 border border-slate-800/80 text-slate-200 rounded-bl-sm backdrop-blur-sm'
+            }`}
+          >
+            {/* ── Thinking state ─────────────────────────────────────── */}
+            {isThinking && !isUser && <ThinkingIndicator />}
+
+            {/* ── Streaming or final content ─────────────────────────── */}
+            {!isThinking && (
+              <div className={`px-4 py-3 ${isStreaming && !isUser ? 'typewriter-cursor' : ''}`}>
+                {renderedContent}
+              </div>
+            )}
+          </div>
+
+          {/* Timestamp */}
+          {!isThinking && (
+            <span className={`text-[10px] text-slate-500 px-1 ${isUser ? 'text-right' : 'text-left'}`}>
+              {isUser ? 'You' : 'AI Agent'} · {time}
+            </span>
+          )}
+        </div>
+    </div>
+  );
+};
+
+export default MessageBubble;
