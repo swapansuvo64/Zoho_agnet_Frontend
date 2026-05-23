@@ -52,6 +52,7 @@ interface MessageBubbleProps {
   timestamp: string;
   isStreaming?: boolean;
   isThinking?: boolean;
+  onActionConfirm?: (action: 'yes' | 'no') => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +86,26 @@ function renderMarkdown(text: string): React.ReactNode[] {
   };
 
   lines.forEach((line, i) => {
+    // ── Special Thinking and Tool Use rendering ───────────────────────────
+    if (line.startsWith('💭 ')) {
+      nodes.push(
+        <div key={i} className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-indigo-950/20 border border-indigo-900/30 text-indigo-300/90 font-medium text-xs my-2.5 shadow-xs shadow-indigo-950/5">
+          <span className="text-sm shrink-0">💭</span>
+          <span className="leading-relaxed">{inlineFormat(line.slice(2))}</span>
+        </div>
+      );
+      return;
+    }
+    if (line.startsWith('⚙️ ')) {
+      nodes.push(
+        <div key={i} className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-950/20 border border-emerald-900/30 text-emerald-300/90 font-mono text-xs my-2.5 shadow-xs shadow-emerald-950/5">
+          <span className="text-sm shrink-0">⚙️</span>
+          <span className="leading-relaxed">{inlineFormat(line.slice(2))}</span>
+        </div>
+      );
+      return;
+    }
+
     // ── Code fence ────────────────────────────────────────────────────────
     if (line.startsWith('```')) {
       if (!inCode) {
@@ -318,17 +339,17 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   timestamp,
   isStreaming = false,
   isThinking = false,
+  onActionConfirm,
 }) => {
   const isUser = role === 'user';
   const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   // Track if we are currently typewriter animating.
-  // If the bubble starts as a finalized message (e.g. loading past history), typing is immediately complete.
   const [isTypingComplete, setIsTypingComplete] = useState(!isStreaming);
-
   const [prevIsStreaming, setPrevIsStreaming] = useState(isStreaming);
+  const [decision, setDecision] = useState<'yes' | 'no' | null>(null);
 
-  // Adjust state in render if isStreaming changes to avoid cascading effect renders
+  // Adjust state in render if isStreaming changes
   if (isStreaming !== prevIsStreaming) {
     setPrevIsStreaming(isStreaming);
     if (isStreaming) {
@@ -339,8 +360,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   // Inject global styles once on first mount
   useEffect(() => { injectGlobalStyles(); }, []);
 
-  // While streaming or typing animation is in progress, render plain text with animated character inserts.
-  // Once the character queue finishes and stream is done, switch to markdown parsing.
   const renderedContent = useMemo(() => {
     if (isUser) return <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>;
     if (!isTypingComplete) {
@@ -354,6 +373,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     }
     return renderMarkdown(text);
   }, [text, isUser, isTypingComplete, isStreaming]);
+
+  const showApprovalButtons = !isUser && text.includes("Human-in-the-Loop Confirmation Required") && onActionConfirm && !isStreaming;
 
   return (
     <div
@@ -386,6 +407,42 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             {!isThinking && (
               <div className={`px-4 py-3 ${isStreaming && !isUser ? 'typewriter-cursor' : ''}`}>
                 {renderedContent}
+
+                {/* ── Human-in-the-Loop Confirmation Panel ───────────────── */}
+                {showApprovalButtons && (
+                  <div className="mt-4 flex flex-wrap items-center gap-3 pt-3.5 border-t border-slate-800/80">
+                    {decision === null ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            setDecision('yes');
+                            onActionConfirm('yes');
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs tracking-wide transition-all shadow-md shadow-emerald-950/20 border border-emerald-500/20 cursor-pointer"
+                        >
+                          Approve (Yes)
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDecision('no');
+                            onActionConfirm('no');
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-semibold text-xs tracking-wide transition-all shadow-md shadow-rose-950/20 border border-rose-500/20 cursor-pointer"
+                        >
+                          Decline (No)
+                        </button>
+                      </>
+                    ) : decision === 'yes' ? (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-950/40 border border-emerald-900/30 text-emerald-400 font-bold text-xs tracking-wide animate-pulse">
+                        <span>✓ Action Approved</span>
+                      </div>
+                    ) : (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-950/40 border border-rose-900/30 text-rose-400 font-bold text-xs tracking-wide animate-pulse">
+                        <span>✗ Action Declined</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

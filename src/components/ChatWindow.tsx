@@ -171,6 +171,24 @@ export const ChatWindow: React.FC = () => {
     }
   }, [input, isStreaming, isThinking, dispatch]);
 
+  const handleActionConfirm = useCallback((action: 'yes' | 'no') => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const text = action === 'yes' ? 'Yes' : 'No';
+    
+    // Add user message to UI
+    dispatch(
+      addMessage({
+        id: `user-${Date.now()}`,
+        role: 'user',
+        text,
+        timestamp: new Date().toISOString(),
+      })
+    );
+    
+    setIsThinking(true);
+    wsRef.current.send(text);
+  }, [dispatch]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -318,6 +336,7 @@ export const ChatWindow: React.FC = () => {
                   role={msg.role}
                   text={msg.text}
                   timestamp={msg.timestamp}
+                  onActionConfirm={handleActionConfirm}
                 />
               ))}
 
@@ -338,6 +357,7 @@ export const ChatWindow: React.FC = () => {
                   text={streamingText}
                   timestamp={new Date().toISOString()}
                   isStreaming
+                  onActionConfirm={handleActionConfirm}
                 />
               )}
             </>
