@@ -84,10 +84,27 @@ const chatSlice = createSlice({
     },
     commitStreamedMessage: (state) => {
       if (state.streamingText) {
+        let cleanedText = state.streamingText;
+        const prefixesToStrip = [
+          "💭 *Just give me a moment... processing your confirmation and executing batch updates on Zoho Projects in parallel.*\n\n",
+          "💭 *Just give me a moment... processing your confirmation and executing batch updates on Zoho Projects in parallel.*\r\n\r\n",
+          "💭 Just give me a moment... processing your confirmation and executing batch updates on Zoho Projects in parallel.\n\n",
+          "💭 *Just give me a moment... processing your confirmation and writing to Zoho Projects.*\n\n",
+          "💭 *Just give me a moment... processing your confirmation and writing to Zoho Projects.*\r\n\r\n",
+          "💭 Just give me a moment... processing your confirmation and writing to Zoho Projects.\n\n",
+          "💭 *Just give me a moment... canceling your pending write action cleanly.*\n\n",
+          "💭 *Just give me a moment... canceling your pending write action cleanly.*\r\n\r\n",
+          "💭 Just give me a moment... canceling your pending write action cleanly.\n\n"
+        ];
+        prefixesToStrip.forEach(prefix => {
+          cleanedText = cleanedText.replace(prefix, "");
+        });
+        cleanedText = cleanedText.trim() || state.streamingText;
+
         state.messages.push({
           id: `agent-${Date.now()}`,
           role: 'assistant',
-          text: state.streamingText,
+          text: cleanedText,
           timestamp: new Date().toISOString(),
         });
       }

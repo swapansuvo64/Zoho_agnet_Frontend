@@ -65,6 +65,10 @@ function renderMarkdown(text: string): React.ReactNode[] {
   let inCode = false;
   let codeLang = '';
 
+  let inTable = false;
+  let tableHeaders: string[] = [];
+  let tableRows: string[][] = [];
+
   const flushCode = (key: number) => {
     nodes.push(
       <div
@@ -85,7 +89,65 @@ function renderMarkdown(text: string): React.ReactNode[] {
     codeLang = '';
   };
 
+  const flushTable = (key: number) => {
+    if (tableHeaders.length === 0 && tableRows.length === 0) return;
+    nodes.push(
+      <div key={`table-${key}`} className="my-3 overflow-x-auto rounded-xl border border-slate-800/80 bg-slate-950/40 backdrop-blur-xs shadow-xs">
+        <table className="min-w-full divide-y divide-slate-800/60 text-xs text-left">
+          <thead className="bg-slate-900/60 text-slate-300 font-semibold uppercase tracking-wider">
+            <tr>
+              {tableHeaders.map((header, hIdx) => (
+                <th key={hIdx} className="px-4 py-3 font-semibold text-indigo-300/90 whitespace-nowrap">
+                  {inlineFormat(header)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/40 text-slate-300">
+            {tableRows.map((row, rIdx) => (
+              <tr key={rIdx} className="hover:bg-slate-800/20 transition-colors">
+                {row.map((cell, cIdx) => (
+                  <td key={cIdx} className="px-4 py-2.5 whitespace-nowrap align-middle">
+                    {inlineFormat(cell)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+    tableHeaders = [];
+    tableRows = [];
+  };
+
   lines.forEach((line, i) => {
+    // ── Table parsing ─────────────────────────────────────────────────────
+    if (!inCode && line.trim().startsWith('|')) {
+      const parts = line.split('|').map(p => p.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+      
+      // Let's check if it's the divider row (e.g. |---|---|)
+      const isDivider = parts.every(p => /^-+$/.test(p.replace(/:/g, '')));
+      
+      if (isDivider) {
+        inTable = true;
+        return;
+      }
+      
+      if (!inTable) {
+        tableHeaders = parts;
+        inTable = true;
+      } else {
+        tableRows.push(parts);
+      }
+      return;
+    } else {
+      if (inTable) {
+        flushTable(i);
+        inTable = false;
+      }
+    }
+
     // ── Special Thinking and Tool Use rendering ───────────────────────────
     if (line.startsWith('💭 ')) {
       nodes.push(
@@ -122,6 +184,12 @@ function renderMarkdown(text: string): React.ReactNode[] {
       return;
     }
 
+    // ── Horizontal Rule ───────────────────────────────────────────────────
+    if (line.trim() === '***' || line.trim() === '---') {
+      nodes.push(<hr key={i} className="my-4 border-slate-800/80" />);
+      return;
+    }
+
     // ── Headings ──────────────────────────────────────────────────────────
     if (line.startsWith('### ')) {
       nodes.push(
@@ -141,23 +209,24 @@ function renderMarkdown(text: string): React.ReactNode[] {
     }
 
     // ── Bullet list ───────────────────────────────────────────────────────
-    if (/^[-*]\s/.test(line)) {
+    const bulletMatch = line.match(/^\s*[-*]\s+(.*)/);
+    if (bulletMatch) {
       nodes.push(
         <div key={i} className="flex items-start gap-2 my-0.5">
           <span className="mt-[5px] h-1.5 w-1.5 rounded-full bg-indigo-400 shrink-0" />
-          <span className="text-sm leading-relaxed">{inlineFormat(line.slice(2))}</span>
+          <span className="text-sm leading-relaxed text-slate-300">{inlineFormat(bulletMatch[1])}</span>
         </div>
       );
       return;
     }
 
     // ── Numbered list ─────────────────────────────────────────────────────
-    const numMatch = line.match(/^(\d+)\.\s(.*)/);
+    const numMatch = line.match(/^\s*(\d+)\.\s+(.*)/);
     if (numMatch) {
       nodes.push(
         <div key={i} className="flex items-start gap-2 my-0.5">
           <span className="text-xs text-indigo-400 font-mono mt-0.5 shrink-0 w-4">{numMatch[1]}.</span>
-          <span className="text-sm leading-relaxed">{inlineFormat(numMatch[2])}</span>
+          <span className="text-sm leading-relaxed text-slate-300">{inlineFormat(numMatch[2])}</span>
         </div>
       );
       return;
@@ -171,7 +240,7 @@ function renderMarkdown(text: string): React.ReactNode[] {
 
     // ── Normal paragraph ──────────────────────────────────────────────────
     nodes.push(
-      <p key={i} className="text-sm leading-relaxed">
+      <p key={i} className="text-sm leading-relaxed text-slate-300">
         {inlineFormat(line)}
       </p>
     );
@@ -179,6 +248,9 @@ function renderMarkdown(text: string): React.ReactNode[] {
 
   // flush unclosed code block
   if (inCode && codeBuffer.length > 0) flushCode(99999);
+
+  // flush unclosed table
+  if (inTable) flushTable(88888);
 
   return nodes;
 }
