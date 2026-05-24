@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState, startTransition } from 'react';
+import React, { useEffect, useRef, useCallback, useState, startTransition, forwardRef, useImperativeHandle } from 'react';
 import {
   Send,
   Sparkles,
@@ -15,6 +15,7 @@ import {
   appendStreamChunk,
   commitStreamedMessage,
   clearStreamingText,
+  closeCurrentSession,
   prependSession,
   setActiveSession,
 } from '../store/chatSlice';
@@ -23,7 +24,12 @@ import MessageBubble from './MessageBubble';
 
 type WsStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
-export const ChatWindow: React.FC = () => {
+export interface ChatWindowHandle {
+  /** Cleanly close the active WebSocket connection (call before switching sessions). */
+  closeWebSocket: () => void;
+}
+
+export const ChatWindow = forwardRef<ChatWindowHandle, object>((_props, ref) => {
   const dispatch = useAppDispatch();
   const {
     messages,
@@ -42,6 +48,16 @@ export const ChatWindow: React.FC = () => {
   const [input, setInput] = useState('');
   const [wsStatus, setWsStatus] = useState<WsStatus>('disconnected');
   const [isThinking, setIsThinking] = useState(false);
+
+  // Expose an imperative handle so the sidebar/header can trigger a clean WS close
+  useImperativeHandle(ref, () => ({
+    closeWebSocket: () => {
+      if (wsRef.current && wsRef.current.readyState < WebSocket.CLOSING) {
+        wsRef.current.close(1000, 'Session switched by user');
+      }
+      dispatch(closeCurrentSession());
+    },
+  }));
 
   // Auto-scroll to bottom using ResizeObserver on the messages wrapper
   useEffect(() => {
@@ -77,10 +93,11 @@ export const ChatWindow: React.FC = () => {
   useEffect(() => {
     if (!activeSessionId || !agentToken) return;
 
-    // Close any existing connection
+    // Close any existing connection and flush in-flight state before opening a new one
     if (wsRef.current && wsRef.current.readyState < WebSocket.CLOSING) {
       wsRef.current.close(1000, 'Session changed');
     }
+    dispatch(closeCurrentSession());
 
     startTransition(() => setWsStatus('connecting'));
     dispatch(clearStreamingText());
@@ -294,6 +311,11 @@ export const ChatWindow: React.FC = () => {
                 </p>
                 <button
                   onClick={() => {
+                    // Close current WS first, then open a new session
+                    if (wsRef.current && wsRef.current.readyState < WebSocket.CLOSING) {
+                      wsRef.current.close(1000, 'Session switched by user');
+                    }
+                    dispatch(closeCurrentSession());
                     const newId = crypto.randomUUID();
                     dispatch(
                       prependSession({
@@ -417,6 +439,8 @@ export const ChatWindow: React.FC = () => {
       </div>
     </main>
   );
-};
+});
+
+ChatWindow.displayName = 'ChatWindow';
 
 export default ChatWindow;

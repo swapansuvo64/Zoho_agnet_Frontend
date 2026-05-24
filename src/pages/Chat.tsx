@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { LogOut, User as UserIcon, Layers, Terminal } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useAppDispatch, useAppSelector } from '../store';
 import { loadSessions, setAgentToken, setActiveSession, loadSessionHistory, prependSession } from '../store/chatSlice';
 import { fetchAccessToken } from '../api/agent';
 import ChatSidebar from '../components/ChatSidebar';
-import ChatWindow from '../components/ChatWindow';
+import ChatWindow, { type ChatWindowHandle } from '../components/ChatWindow';
 import ZohoDetailPopup from '../components/ZohoDetailPopup';
 
 export const Chat: React.FC = () => {
@@ -13,6 +13,9 @@ export const Chat: React.FC = () => {
   const { user, logout } = useAuth();
   const { agentToken } = useAppSelector((state) => state.chat);
   
+  // Ref to ChatWindow so we can call closeWebSocket() before switching sessions
+  const chatWindowRef = useRef<ChatWindowHandle>(null);
+
   const [activePopup, setActivePopup] = useState<{ type: 'project' | 'task' | 'member'; projectId: string; taskId?: string } | null>(null);
 
   useEffect(() => {
@@ -70,7 +73,7 @@ export const Chat: React.FC = () => {
   return (
     <div className="flex h-screen w-screen bg-[#070b13] text-slate-100 overflow-hidden">
       {/* ── Collapsable History Sidebar ───────────────────────── */}
-      <ChatSidebar />
+      <ChatSidebar onBeforeSessionChange={() => chatWindowRef.current?.closeWebSocket()} />
 
       {/* ── Right Section: User Panel (only when expanded) + Chat ── */}
       <div className="flex flex-col flex-1 min-w-0">
@@ -114,7 +117,7 @@ export const Chat: React.FC = () => {
 
         {/* ── Chat Area ─────────────────────────────────────────── */}
         <div className="flex flex-1 min-h-0">
-          <ChatWindow />
+          <ChatWindow ref={chatWindowRef} />
         </div>
 
         {/* ── Interactive Detail Popup ──────────────────────────── */}

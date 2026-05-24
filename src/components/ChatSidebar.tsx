@@ -16,12 +16,14 @@ import {
   prependSession,
 } from '../store/chatSlice';
 
-export const ChatSidebar: React.FC = () => {
+export const ChatSidebar: React.FC<{ onBeforeSessionChange?: () => void }> = ({ onBeforeSessionChange }) => {
   const dispatch = useAppDispatch();
   const { sessions, activeSessionId, sidebarOpen, loadingSessions, agentToken } =
     useAppSelector((s) => s.chat);
 
   const handleNewChat = useCallback(() => {
+    // Close previous session cleanly before opening a new one
+    onBeforeSessionChange?.();
     const newId = crypto.randomUUID();
     dispatch(
       prependSession({
@@ -33,17 +35,19 @@ export const ChatSidebar: React.FC = () => {
       })
     );
     dispatch(setActiveSession(newId));
-  }, [dispatch]);
+  }, [dispatch, onBeforeSessionChange]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
       if (sessionId === activeSessionId) return;
+      // Close previous session cleanly before switching
+      onBeforeSessionChange?.();
       dispatch(setActiveSession(sessionId));
       if (agentToken) {
         dispatch(loadSessionHistory({ sessionId, token: agentToken }));
       }
     },
-    [dispatch, activeSessionId, agentToken]
+    [dispatch, activeSessionId, agentToken, onBeforeSessionChange]
   );
 
   const formatDate = (iso: string) => {

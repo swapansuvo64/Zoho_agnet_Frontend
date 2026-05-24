@@ -104,6 +104,13 @@ const chatSlice = createSlice({
     setSidebarOpen: (state, action: PayloadAction<boolean>) => {
       state.sidebarOpen = action.payload;
     },
+    // Clears all in-flight message/streaming state for the current session
+    // without changing activeSessionId — use before calling setActiveSession.
+    closeCurrentSession: (state) => {
+      state.messages = [];
+      state.streamingText = '';
+      state.isStreaming = false;
+    },
     prependSession: (state, action: PayloadAction<ChatSession>) => {
       // Insert a new session at the top of the list (for new chats)
       const exists = state.sessions.find(s => s.session_id === action.payload.session_id);
@@ -163,6 +170,7 @@ export const {
   setSidebarOpen,
   prependSession,
   updateSessionSummary,
+  closeCurrentSession,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;
