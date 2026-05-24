@@ -248,7 +248,7 @@ export const ChatWindow = forwardRef<ChatWindowHandle, object>((_props, ref) => 
             addMessage({
               id: `err-${Date.now()}`,
               role: 'assistant',
-              text: `⚠️ Agent error: ${data.text ?? 'Unknown error'}`,
+              text: ` Agent error: ${data.text ?? 'Unknown error'}`,
               timestamp: new Date().toISOString(),
             })
           );
