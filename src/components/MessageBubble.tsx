@@ -1,5 +1,5 @@
 import React, { useMemo, useEffect, useState, useRef } from 'react';
-import { Bot, User as UserIcon } from 'lucide-react';
+import { Bot, User as UserIcon, ChevronRight, ChevronDown, Check } from 'lucide-react';
 
 // Inject keyframe animations once into <head> — never re-runs
 let _stylesInjected = false;
@@ -58,8 +58,81 @@ interface MessageBubbleProps {
 // ---------------------------------------------------------------------------
 // Minimal markdown renderer: bold, inline-code, code blocks, line-breaks
 // ---------------------------------------------------------------------------
+interface ProcessStep {
+  type: 'think' | 'tool';
+  emoji: string;
+  text: string;
+}
+
+const CollapsibleProcessBlock: React.FC<{ steps: ProcessStep[] }> = ({ steps }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  // Dynamic header based on tools used or thinking process
+  const hasTool = steps.some(s => s.type === 'tool');
+  const firstToolStep = steps.find(s => s.type === 'tool');
+  
+  // Clean up tool name by removing Markdown symbols (*, _, `) and standard "Using Tool" text
+  const rawToolText = firstToolStep ? firstToolStep.text : '';
+  const cleanToolName = rawToolText
+    .replace(/^[\s*_]*using\s+tool:?[\s*_]*/i, '') // Strips "Using Tool:" or "*Using Tool:*" case-insensitively
+    .replace(/[`'"]/g, '') // Strips backticks or quotes
+    .trim();
+  
+  const headerText = hasTool 
+    ? `Using Tool: ${cleanToolName}` 
+    : 'Analyzing your request...';
+
+  return (
+    <div className="my-3 rounded-xl border border-slate-800/80 bg-slate-950/20 overflow-hidden shadow-xs">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-900/40 text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-900/70 transition-all cursor-pointer select-none"
+      >
+        <div className="flex items-center gap-2">
+          {/* Pulsing indicator if not opened or loader */}
+          <span className="flex h-1.5 w-1.5 rounded-full bg-indigo-500 animate-pulse shrink-0" />
+          <span className="font-mono tracking-wide">{headerText}</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-slate-500">
+          <span className="text-[10px] font-normal font-sans">{steps.length} steps</span>
+          {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        </div>
+      </button>
+      
+      {isOpen && (
+        <div className="px-4 py-3 bg-[#070b13]/60 border-t border-slate-800/60 divide-y divide-slate-800/30 text-xs text-slate-400 font-sans space-y-2">
+          {steps.map((step, idx) => (
+            <div key={idx} className="flex items-start gap-2.5 pt-2 first:pt-0">
+              <span className="text-sm shrink-0 select-none">
+                {step.emoji}
+              </span>
+              <div className="flex-1 leading-relaxed text-slate-300">
+                {inlineFormat(step.text)}
+              </div>
+              <div className="flex items-center gap-1 text-emerald-500 font-medium text-[10px] uppercase font-mono select-none">
+                <Check className="h-3.5 w-3.5" />
+                Done
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Minimal markdown renderer: bold, inline-code, code blocks, line-breaks
+// ---------------------------------------------------------------------------
 function renderMarkdown(text: string): React.ReactNode[] {
-  const lines = text.split('\n');
+  const unescapedText = text
+    .replace(/\\\[/g, '[')
+    .replace(/\\\]/g, ']')
+    .replace(/\\\(/g, '(')
+    .replace(/\\\)/g, ')')
+    .replace(/\\_/g, '_')
+    .replace(/\\\//g, '/');
+  const lines = unescapedText.split('\n');
   const nodes: React.ReactNode[] = [];
   let codeBuffer: string[] = [];
   let inCode = false;
@@ -68,6 +141,16 @@ function renderMarkdown(text: string): React.ReactNode[] {
   let inTable = false;
   let tableHeaders: string[] = [];
   let tableRows: string[][] = [];
+
+  let processBuffer: ProcessStep[] = [];
+
+  const flushProcessBuffer = (key: number) => {
+    if (processBuffer.length === 0) return;
+    nodes.push(
+      <CollapsibleProcessBlock key={`process-${key}`} steps={processBuffer} />
+    );
+    processBuffer = [];
+  };
 
   const flushCode = (key: number) => {
     nodes.push(
@@ -122,6 +205,33 @@ function renderMarkdown(text: string): React.ReactNode[] {
   };
 
   lines.forEach((line, i) => {
+    // ── Special Thinking, Tool Use, and Progress buffering ─────────────────
+    // Support standard emojis indicating active reasoning, tool calls, or network requests:
+    // 💭 (thinking), ⚙️ (tool execute), 📡 (data fetch), ✍️ (formatting), 🔍 (search), 🧠 (processor), 🔄 (looping status), 🔐 (preparing confirmation), 🔀 (parallel planning)
+    const progressRegex = /^(💭|⚙️|📡|✍️|🔍|🧠|🔄|🔐|🔀)\s*(.*)/;
+    const progressMatch = line.match(progressRegex);
+    
+    if (progressMatch) {
+      const emoji = progressMatch[1];
+      const textContent = progressMatch[2].trim();
+      const isToolRelated = emoji === '⚙️' || emoji === '📡';
+      
+      processBuffer.push({ 
+        type: isToolRelated ? 'tool' : 'think', 
+        emoji: emoji,
+        text: textContent
+      });
+      return;
+    }
+
+    // Treat empty line during active process turns as part of the block to prevent premature flushes
+    if (line.trim() === '' && processBuffer.length > 0) {
+      return;
+    }
+
+    // Flush any pending thinking steps before rendering normal markdown elements
+    flushProcessBuffer(i);
+
     // ── Table parsing ─────────────────────────────────────────────────────
     if (!inCode && line.trim().startsWith('|')) {
       const parts = line.split('|').map(p => p.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
@@ -146,26 +256,6 @@ function renderMarkdown(text: string): React.ReactNode[] {
         flushTable(i);
         inTable = false;
       }
-    }
-
-    // ── Special Thinking and Tool Use rendering ───────────────────────────
-    if (line.startsWith('💭 ')) {
-      nodes.push(
-        <div key={i} className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-indigo-950/20 border border-indigo-900/30 text-indigo-300/90 font-medium text-xs my-2.5 shadow-xs shadow-indigo-950/5">
-          <span className="text-sm shrink-0">💭</span>
-          <span className="leading-relaxed">{inlineFormat(line.slice(2))}</span>
-        </div>
-      );
-      return;
-    }
-    if (line.startsWith('⚙️ ')) {
-      nodes.push(
-        <div key={i} className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-950/20 border border-emerald-900/30 text-emerald-300/90 font-mono text-xs my-2.5 shadow-xs shadow-emerald-950/5">
-          <span className="text-sm shrink-0">⚙️</span>
-          <span className="leading-relaxed">{inlineFormat(line.slice(2))}</span>
-        </div>
-      );
-      return;
     }
 
     // ── Code fence ────────────────────────────────────────────────────────
@@ -209,7 +299,7 @@ function renderMarkdown(text: string): React.ReactNode[] {
     }
 
     // ── Bullet list ───────────────────────────────────────────────────────
-    const bulletMatch = line.match(/^\s*[-*]\s+(.*)/);
+    const bulletMatch = line.match(/^\s*[-*•]\s+(.*)/);
     if (bulletMatch) {
       nodes.push(
         <div key={i} className="flex items-start gap-2 my-0.5">
@@ -246,6 +336,9 @@ function renderMarkdown(text: string): React.ReactNode[] {
     );
   });
 
+  // flush unclosed process blocks
+  flushProcessBuffer(99999);
+
   // flush unclosed code block
   if (inCode && codeBuffer.length > 0) flushCode(99999);
 
@@ -265,20 +358,79 @@ function inlineFormat(text: string): React.ReactNode[] {
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) parts.push(text.slice(last, m.index));
     if (m[2] !== undefined) {
-      parts.push(<strong key={m.index} className="font-semibold text-slate-100">{m[2]}</strong>);
+      parts.push(<strong key={m.index} className="font-semibold text-slate-100">{inlineFormat(m[2])}</strong>);
     } else if (m[3] !== undefined) {
-      parts.push(<em key={m.index} className="italic text-slate-300">{m[3]}</em>);
+      parts.push(<em key={m.index} className="italic text-slate-300">{inlineFormat(m[3])}</em>);
     } else if (m[4] !== undefined) {
-      parts.push(
-        <code key={m.index} className="rounded px-1.5 py-0.5 bg-slate-700/70 text-indigo-300 text-[11px] font-mono">
-          {m[4]}
-        </code>
-      );
+      const codeContent = m[4].trim();
+      const zohoLinkRegex = /^\[([^\]]+)\]\((project:\/\/|project::\/\/|task:\/\/|task::\/\/|member:\/\/|member::\/\/)([^)]+)\)$/;
+      const zohoMatch = codeContent.match(zohoLinkRegex);
+      if (zohoMatch) {
+        const linkText = zohoMatch[1];
+        const protocol = zohoMatch[2];
+        const rest = zohoMatch[3];
+        const url = protocol + rest;
+        
+        if (protocol.startsWith('project')) {
+          const projectId = url.replace(/^(project:\/\/|project::\/\/)/, '');
+          parts.push(
+            <button
+              key={m.index}
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('open-zoho-popup', {
+                  detail: { type: 'project', projectId }
+                }));
+              }}
+              className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer align-baseline"
+            >
+              📁 {linkText}
+            </button>
+          );
+        } else if (protocol.startsWith('task')) {
+          const path = url.replace(/^(task:\/\/|task::\/\/)/, '');
+          const [projectId, taskId] = path.split('/');
+          parts.push(
+            <button
+              key={m.index}
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('open-zoho-popup', {
+                  detail: { type: 'task', projectId, taskId }
+                }));
+              }}
+              className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer align-baseline"
+            >
+              ✓ {linkText}
+            </button>
+          );
+        } else if (protocol.startsWith('member')) {
+          const path = url.replace(/^(member:\/\/|member::\/\/)/, '');
+          const [projectId, memberId] = path.split('/');
+          parts.push(
+            <button
+              key={m.index}
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('open-zoho-popup', {
+                  detail: { type: 'member', projectId, taskId: memberId }
+                }));
+              }}
+              className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer align-baseline"
+            >
+              👤 {linkText}
+            </button>
+          );
+        }
+      } else {
+        parts.push(
+          <code key={m.index} className="rounded px-1.5 py-0.5 bg-slate-700/70 text-indigo-300 text-[11px] font-mono">
+            {m[4]}
+          </code>
+        );
+      }
     } else if (m[5] !== undefined && m[6] !== undefined) {
       const linkText = m[5];
       const url = m[6];
-      if (url.startsWith('project://')) {
-        const projectId = url.replace('project://', '');
+      if (url.startsWith('project://') || url.startsWith('project:://')) {
+        const projectId = url.replace(/^(project:\/\/|project::\/\/)/, '');
         parts.push(
           <button
             key={m.index}
@@ -292,8 +444,8 @@ function inlineFormat(text: string): React.ReactNode[] {
             📁 {linkText}
           </button>
         );
-      } else if (url.startsWith('task://')) {
-        const path = url.replace('task://', '');
+      } else if (url.startsWith('task://') || url.startsWith('task:://')) {
+        const path = url.replace(/^(task:\/\/|task::\/\/)/, '');
         const [projectId, taskId] = path.split('/');
         parts.push(
           <button
@@ -308,8 +460,8 @@ function inlineFormat(text: string): React.ReactNode[] {
             ✓ {linkText}
           </button>
         );
-      } else if (url.startsWith('member://')) {
-        const path = url.replace('member://', '');
+      } else if (url.startsWith('member://') || url.startsWith('member:://')) {
+        const path = url.replace(/^(member:\/\/|member::\/\/)/, '');
         const [projectId, memberId] = path.split('/');
         parts.push(
           <button

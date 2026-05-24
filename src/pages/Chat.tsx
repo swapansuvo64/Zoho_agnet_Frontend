@@ -55,6 +55,7 @@ export const Chat: React.FC = () => {
               total_turns: 0,
               created_at: new Date().toISOString(),
               updated_at: null,
+              is_saved: false,
             })
           );
           dispatch(setActiveSession(newId));

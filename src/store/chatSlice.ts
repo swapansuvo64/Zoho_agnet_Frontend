@@ -50,7 +50,8 @@ const initialState: ChatState = {
 
 export const loadSessions = createAsyncThunk(
   'chat/loadSessions',
-  async (token: string, { rejectWithValue }) => {
+  async (arg: string | { token: string; soft?: boolean }, { rejectWithValue }) => {
+    const token = typeof arg === 'string' ? arg : arg.token;
     try {
       return await fetchChatSessions(token);
     } catch (err: unknown) {
@@ -161,6 +162,16 @@ const chatSlice = createSlice({
       state.isStreaming = false;
     },
     prependSession: (state, action: PayloadAction<ChatSession>) => {
+      // Prevent duplicate empty sessions (e.g. from React 18 StrictMode double effects)
+      const existingEmpty = state.sessions.find(s => s.total_turns === 0 && !s.summary);
+      if (existingEmpty) {
+        if (action.payload.total_turns === 0 && !action.payload.summary) {
+          existingEmpty.session_id = action.payload.session_id;
+          existingEmpty.created_at = action.payload.created_at;
+          return;
+        }
+      }
+
       const exists = state.sessions.find(s => s.session_id === action.payload.session_id);
       if (!exists) {
         state.sessions.unshift(action.payload);
@@ -177,12 +188,21 @@ const chatSlice = createSlice({
   extraReducers: (builder) => {
     builder
       // loadSessions
-      .addCase(loadSessions.pending, (state) => {
-        state.loadingSessions = true;
+      .addCase(loadSessions.pending, (state, action) => {
+        const arg = action.meta.arg;
+        const soft = typeof arg === 'object' && arg !== null && 'soft' in arg ? !!arg.soft : false;
+        if (!soft) {
+          state.loadingSessions = true;
+        }
         state.sessionError = null;
       })
       .addCase(loadSessions.fulfilled, (state, action: PayloadAction<ChatSession[]>) => {
-        state.sessions = action.payload;
+        const sessions = action.payload;
+        // Preserve any unsaved/locally created sessions that are currently in state.sessions!
+        const unsavedLocalSessions = state.sessions.filter(
+          (s) => !sessions.some((dbS) => dbS.session_id === s.session_id) && s.total_turns === 0 && !s.summary
+        );
+        state.sessions = [...unsavedLocalSessions, ...sessions];
         state.loadingSessions = false;
       })
       .addCase(loadSessions.rejected, (state, action) => {

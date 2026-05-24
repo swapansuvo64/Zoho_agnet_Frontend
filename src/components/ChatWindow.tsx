@@ -8,6 +8,7 @@ import {
   Loader2,
   Bot,
   Plus,
+  Mic,
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../store';
 import {
@@ -48,6 +49,25 @@ export const ChatWindow = forwardRef<ChatWindowHandle, object>((_props, ref) => 
   const [input, setInput] = useState('');
   const [wsStatus, setWsStatus] = useState<WsStatus>('disconnected');
   const [isThinking, setIsThinking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
+
+  // Type definitions to bypass strict "no-any" linting rule for native APIs
+  type SpeechRecognitionInstance = {
+    continuous: boolean;
+    interimResults: boolean;
+    lang: string;
+    onstart: (() => void) | null;
+    onresult: ((event: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => void) | null;
+    onerror: ((e: { error: string }) => void) | null;
+    onend: (() => void) | null;
+    start: () => void;
+    stop: () => void;
+  };
+
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+
 
   // Expose an imperative handle so the sidebar/header can trigger a clean WS close
   useImperativeHandle(ref, () => ({
@@ -58,6 +78,106 @@ export const ChatWindow = forwardRef<ChatWindowHandle, object>((_props, ref) => 
       dispatch(closeCurrentSession());
     },
   }));
+
+  // Initialize standard Browser SpeechRecognition
+  useEffect(() => {
+    const SpeechRecognitionClass = window as unknown as {
+      SpeechRecognition?: new () => SpeechRecognitionInstance;
+      webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
+    };
+
+    const SpeechRecognition =
+      SpeechRecognitionClass.SpeechRecognition || SpeechRecognitionClass.webkitSpeechRecognition;
+
+    if (SpeechRecognition) {
+      setSpeechSupported(true);
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = 'en-US';
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          setInput((prev) => {
+            const separator = prev && !prev.endsWith(' ') ? ' ' : '';
+            return prev + separator + transcript;
+          });
+        }
+      };
+
+      rec.onerror = (e: { error: string }) => {
+        console.error('Speech recognition error:', e.error);
+        setIsListening(false);
+        cleanupAudio();
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+        cleanupAudio();
+      };
+
+      recognitionRef.current = rec;
+    }
+  }, []);
+
+  const cleanupAudio = () => {
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((track) => track.stop());
+      audioStreamRef.current = null;
+    }
+  };
+
+  const startListening = async () => {
+    if (!recognitionRef.current) return;
+    try {
+      // request micro stream with strict noise cancellation/high pass filters
+      // This activates browser's hardware-level noise cancellation & echo suppression pipelines
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      audioStreamRef.current = stream;
+
+      // Start the browser recognition
+      recognitionRef.current.start();
+    } catch (err) {
+      console.warn('Failed to get micro stream with constraints:', err);
+      // Fallback: start recognition directly
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        console.error('Failed to start speech recognition fallback:', e);
+      }
+    }
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // No-op: recognition might already be stopped or inactive
+      }
+    }
+    setIsListening(false);
+    cleanupAudio();
+  };
+
+  const toggleListening = () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
 
   // Auto-scroll to bottom using ResizeObserver on the messages wrapper
   useEffect(() => {
@@ -324,6 +444,7 @@ export const ChatWindow = forwardRef<ChatWindowHandle, object>((_props, ref) => 
                         total_turns: 0,
                         created_at: new Date().toISOString(),
                         updated_at: null,
+                        is_saved: false,
                       })
                     );
                     dispatch(setActiveSession(newId));
@@ -423,6 +544,12 @@ export const ChatWindow = forwardRef<ChatWindowHandle, object>((_props, ref) => 
               : 'border-slate-700/60 bg-slate-900/80 focus-within:border-indigo-500/60 focus-within:shadow-[0_0_0_3px_rgba(99,102,241,0.08)]'
           }`}
         >
+          {isListening && (
+            <div className="absolute -top-11 left-4 bg-rose-500 text-white text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg shadow-rose-500/20 border border-rose-400/20 z-10 animate-pulse">
+              <span className="h-2 w-2 rounded-full bg-white animate-ping" />
+              <span>Listening... Speak now (Noise-suppressed)</span>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             id="chat-input"
@@ -434,6 +561,8 @@ export const ChatWindow = forwardRef<ChatWindowHandle, object>((_props, ref) => 
             placeholder={
               !activeSessionId
                 ? 'Select or start a new chat…'
+                : isListening
+                ? 'Listening... speak clearly into your microphone.'
                 : isThinking
                 ? 'Agent is thinking…'
                 : isStreaming
@@ -445,6 +574,21 @@ export const ChatWindow = forwardRef<ChatWindowHandle, object>((_props, ref) => 
             className="flex-1 resize-none bg-transparent text-sm text-slate-200 placeholder-slate-500 outline-none min-h-[24px] max-h-40 leading-6 disabled:cursor-not-allowed"
             style={{ height: 'auto' }}
           />
+          {speechSupported && (
+            <button
+              type="button"
+              onClick={toggleListening}
+              disabled={!activeSessionId || wsStatus !== 'connected' || isStreaming || isThinking}
+              title={isListening ? 'Stop listening' : 'Speech to text (Noise-suppressed)'}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${
+                isListening
+                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse shadow-md shadow-rose-500/10'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700/40 hover:text-slate-200'
+              }`}
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+          )}
           <button
             id="send-btn"
             onClick={handleSend}

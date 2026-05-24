@@ -19,6 +19,7 @@ import {
   prependSession,
   deleteSessionThunk,
   toggleSaveSessionThunk,
+  loadSessions,
 } from '../store/chatSlice';
 
 export const ChatSidebar: React.FC<{ onBeforeSessionChange?: () => void }> = ({ onBeforeSessionChange }) => {
@@ -26,6 +27,7 @@ export const ChatSidebar: React.FC<{ onBeforeSessionChange?: () => void }> = ({ 
   const {
     sessions,
     activeSessionId,
+    messages,
     sidebarOpen,
     loadingSessions,
     agentToken,
@@ -39,6 +41,14 @@ export const ChatSidebar: React.FC<{ onBeforeSessionChange?: () => void }> = ({ 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const handleNewChat = useCallback(() => {
+    // If the active session is already a fresh empty session (no messages in history/current stream), just stay in it!
+    if (activeSessionId) {
+      const activeSession = sessions.find((s) => s.session_id === activeSessionId);
+      if (activeSession && activeSession.total_turns === 0 && messages.length === 0) {
+        return; // Already in a new empty chat session
+      }
+    }
+
     onBeforeSessionChange?.();
     const newId = crypto.randomUUID();
     dispatch(
@@ -52,7 +62,17 @@ export const ChatSidebar: React.FC<{ onBeforeSessionChange?: () => void }> = ({ 
       })
     );
     dispatch(setActiveSession(newId));
-  }, [dispatch, onBeforeSessionChange]);
+
+    if (agentToken) {
+      // Soft reload after a short delay to allow backend to persist the old session and generate its summary
+      setTimeout(() => {
+        dispatch(loadSessions({ token: agentToken, soft: true }));
+      }, 800);
+      setTimeout(() => {
+        dispatch(loadSessions({ token: agentToken, soft: true }));
+      }, 2500);
+    }
+  }, [dispatch, agentToken, activeSessionId, sessions, messages.length, onBeforeSessionChange]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
@@ -61,6 +81,14 @@ export const ChatSidebar: React.FC<{ onBeforeSessionChange?: () => void }> = ({ 
       dispatch(setActiveSession(sessionId));
       if (agentToken) {
         dispatch(loadSessionHistory({ sessionId, token: agentToken }));
+        
+        // Soft reload sessions list after a short delay so the old session's summary updates in the sidebar
+        setTimeout(() => {
+          dispatch(loadSessions({ token: agentToken, soft: true }));
+        }, 800);
+        setTimeout(() => {
+          dispatch(loadSessions({ token: agentToken, soft: true }));
+        }, 2500);
       }
     },
     [dispatch, activeSessionId, agentToken, onBeforeSessionChange]
@@ -301,7 +329,7 @@ export const ChatSidebar: React.FC<{ onBeforeSessionChange?: () => void }> = ({ 
               </p>
             )}
             <ul className="space-y-0.5 px-2">
-              {(sidebarOpen ? recentSessions : sessions).map(renderSession)}
+              {(sidebarOpen ? recentSessions : [...savedSessions, ...recentSessions]).map(renderSession)}
             </ul>
           </>
         )}
