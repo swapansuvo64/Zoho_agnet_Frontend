@@ -546,34 +546,34 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
                 {/* ── Human-in-the-Loop Confirmation Panel ───────────────── */}
                 {showApprovalButtons && (
-                  <div className="mt-4 flex flex-wrap items-center gap-3 pt-3.5 border-t border-slate-800/80">
+                  <div className="mt-4 pt-3.5 border-t border-slate-800/80">
                     {decision === null ? (
-                      <>
+                      <div className="flex flex-wrap items-center gap-3">
                         <button
                           onClick={() => {
                             setDecision('yes');
-                            onActionConfirm('yes');
+                            onActionConfirm!('yes');
                           }}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs tracking-wide transition-all shadow-md shadow-emerald-950/20 border border-emerald-500/20 cursor-pointer"
                         >
-                          Approve (Yes)
+                          ✓ Approve (Yes)
                         </button>
                         <button
                           onClick={() => {
                             setDecision('no');
-                            onActionConfirm('no');
+                            onActionConfirm!('no');
                           }}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-semibold text-xs tracking-wide transition-all shadow-md shadow-rose-950/20 border border-rose-500/20 cursor-pointer"
                         >
-                          Decline (No)
+                          ✗ Decline (No)
                         </button>
-                      </>
+                      </div>
                     ) : decision === 'yes' ? (
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-950/40 border border-emerald-900/30 text-emerald-400 font-bold text-xs tracking-wide animate-pulse">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-950/40 border border-emerald-900/30 text-emerald-400 font-bold text-xs tracking-wide">
                         <span>✓ Action Approved</span>
                       </div>
                     ) : (
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-950/40 border border-rose-900/30 text-rose-400 font-bold text-xs tracking-wide animate-pulse">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-950/40 border border-rose-900/30 text-rose-400 font-bold text-xs tracking-wide">
                         <span>✗ Action Declined</span>
                       </div>
                     )}

@@ -352,15 +352,41 @@ export const ChatWindow = forwardRef<ChatWindowHandle, object>((_props, ref) => 
             </div>
           ) : (
             <>
-              {messages.map((msg) => (
-                <MessageBubble
-                  key={msg.id}
-                  role={msg.role}
-                  text={msg.text}
-                  timestamp={msg.timestamp}
-                  onActionConfirm={handleActionConfirm}
-                />
-              ))}
+              {(() => {
+                // Find the last confirmation message that has NOT yet been answered.
+                // A confirmation is "answered" if a user message (Yes/No) follows it.
+                const CONFIRM_MARKER = 'Human-in-the-Loop Confirmation Required';
+                const CONFIRM_WORDS = new Set(['yes', 'no', 'confirm', 'cancel', 'approve', 'abort']);
+
+                let lastPendingConfirmIdx = -1;
+                for (let i = messages.length - 1; i >= 0; i--) {
+                  const msg = messages[i];
+                  if (msg.role === 'assistant' && msg.text.includes(CONFIRM_MARKER)) {
+                    // Check if any user message after this index is a confirm/decline reply
+                    const hasReply = messages
+                      .slice(i + 1)
+                      .some(
+                        (m) =>
+                          m.role === 'user' &&
+                          CONFIRM_WORDS.has(m.text.trim().toLowerCase().replace(/[.!?]$/, ''))
+                      );
+                    if (!hasReply) {
+                      lastPendingConfirmIdx = i;
+                    }
+                    break; // only look at the most recent confirmation block
+                  }
+                }
+
+                return messages.map((msg, idx) => (
+                  <MessageBubble
+                    key={msg.id}
+                    role={msg.role}
+                    text={msg.text}
+                    timestamp={msg.timestamp}
+                    onActionConfirm={idx === lastPendingConfirmIdx ? handleActionConfirm : undefined}
+                  />
+                ));
+              })()}
 
               {/* Thinking indicator — shown while waiting for first chunk */}
               {isThinking && !streamingText && (

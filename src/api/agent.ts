@@ -8,6 +8,7 @@ export interface ChatSession {
   total_turns: number;
   created_at: string;
   updated_at: string | null;
+  is_saved: boolean | null;
 }
 
 export interface ChatMessage {
@@ -58,6 +59,27 @@ export async function fetchSessionHistory(sessionId: string, token: string): Pro
 }
 
 /**
+ * Permanently delete a session and all its data (history, summary, vectors).
+ */
+export async function deleteSession(sessionId: string, token: string): Promise<void> {
+  const url = `${AGENT_BASE_URL}/sessions/${sessionId}?token=${encodeURIComponent(token)}`;
+  const res = await fetch(url, { method: 'DELETE', credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to delete session');
+}
+
+/**
+ * Toggle the is_saved flag on a session.
+ * Returns the new is_saved value.
+ */
+export async function toggleSaveSession(sessionId: string, token: string): Promise<boolean> {
+  const url = `${AGENT_BASE_URL}/sessions/${sessionId}/save?token=${encodeURIComponent(token)}`;
+  const res = await fetch(url, { method: 'PATCH', credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to toggle save');
+  const data = await res.json();
+  return data.is_saved as boolean;
+}
+
+/**
  * Create a new WebSocket connection to the agent for a given session.
  * Messages arrive as JSON: { type: 'chunk'|'done'|'error', text?: string }
  */
@@ -65,3 +87,4 @@ export function createAgentWebSocket(sessionId: string, token: string): WebSocke
   const wsBase = AGENT_BASE_URL.replace(/^http/, 'ws');
   return new WebSocket(`${wsBase}/chat/ws/${sessionId}?token=${encodeURIComponent(token)}`);
 }
+

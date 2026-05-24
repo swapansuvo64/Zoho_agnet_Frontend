@@ -1,6 +1,11 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import type { PayloadAction } from '@reduxjs/toolkit';
-import { fetchChatSessions, fetchSessionHistory } from '../api/agent';
+import {
+  fetchChatSessions,
+  fetchSessionHistory,
+  deleteSession as apiDeleteSession,
+  toggleSaveSession as apiToggleSave,
+} from '../api/agent';
 import type { ChatSession, ChatMessage } from '../api/agent';
 
 export interface Message {
@@ -21,8 +26,9 @@ interface ChatState {
   loadingSessions: boolean;
   loadingHistory: boolean;
   sessionError: string | null;
-  // Token cached for API calls
   agentToken: string | null;
+  deletingSessionId: string | null;
+  togglingSessionId: string | null;
 }
 
 const initialState: ChatState = {
@@ -36,14 +42,17 @@ const initialState: ChatState = {
   loadingHistory: false,
   sessionError: null,
   agentToken: null,
+  deletingSessionId: null,
+  togglingSessionId: null,
 };
+
+// ── Async thunks ─────────────────────────────────────────────────────────────
 
 export const loadSessions = createAsyncThunk(
   'chat/loadSessions',
   async (token: string, { rejectWithValue }) => {
     try {
-      const sessions = await fetchChatSessions(token);
-      return sessions;
+      return await fetchChatSessions(token);
     } catch (err: unknown) {
       return rejectWithValue(err instanceof Error ? err.message : 'Failed to load sessions');
     }
@@ -54,13 +63,38 @@ export const loadSessionHistory = createAsyncThunk(
   'chat/loadSessionHistory',
   async ({ sessionId, token }: { sessionId: string; token: string }, { rejectWithValue }) => {
     try {
-      const history = await fetchSessionHistory(sessionId, token);
-      return history;
+      return await fetchSessionHistory(sessionId, token);
     } catch (err: unknown) {
       return rejectWithValue(err instanceof Error ? err.message : 'Failed to load history');
     }
   }
 );
+
+export const deleteSessionThunk = createAsyncThunk(
+  'chat/deleteSession',
+  async ({ sessionId, token }: { sessionId: string; token: string }, { rejectWithValue }) => {
+    try {
+      await apiDeleteSession(sessionId, token);
+      return sessionId;
+    } catch (err: unknown) {
+      return rejectWithValue(err instanceof Error ? err.message : 'Failed to delete session');
+    }
+  }
+);
+
+export const toggleSaveSessionThunk = createAsyncThunk(
+  'chat/toggleSaveSession',
+  async ({ sessionId, token }: { sessionId: string; token: string }, { rejectWithValue }) => {
+    try {
+      const isSaved = await apiToggleSave(sessionId, token);
+      return { sessionId, isSaved };
+    } catch (err: unknown) {
+      return rejectWithValue(err instanceof Error ? err.message : 'Failed to toggle save');
+    }
+  }
+);
+
+// ── Slice ─────────────────────────────────────────────────────────────────────
 
 const chatSlice = createSlice({
   name: 'chat',
@@ -121,15 +155,12 @@ const chatSlice = createSlice({
     setSidebarOpen: (state, action: PayloadAction<boolean>) => {
       state.sidebarOpen = action.payload;
     },
-    // Clears all in-flight message/streaming state for the current session
-    // without changing activeSessionId — use before calling setActiveSession.
     closeCurrentSession: (state) => {
       state.messages = [];
       state.streamingText = '';
       state.isStreaming = false;
     },
     prependSession: (state, action: PayloadAction<ChatSession>) => {
-      // Insert a new session at the top of the list (for new chats)
       const exists = state.sessions.find(s => s.session_id === action.payload.session_id);
       if (!exists) {
         state.sessions.unshift(action.payload);
@@ -145,6 +176,7 @@ const chatSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
+      // loadSessions
       .addCase(loadSessions.pending, (state) => {
         state.loadingSessions = true;
         state.sessionError = null;
@@ -157,6 +189,7 @@ const chatSlice = createSlice({
         state.loadingSessions = false;
         state.sessionError = action.payload as string;
       })
+      // loadSessionHistory
       .addCase(loadSessionHistory.pending, (state) => {
         state.loadingHistory = true;
         state.messages = [];
@@ -172,6 +205,37 @@ const chatSlice = createSlice({
       })
       .addCase(loadSessionHistory.rejected, (state) => {
         state.loadingHistory = false;
+      })
+      // deleteSession
+      .addCase(deleteSessionThunk.pending, (state, action) => {
+        state.deletingSessionId = action.meta.arg.sessionId;
+      })
+      .addCase(deleteSessionThunk.fulfilled, (state, action: PayloadAction<string>) => {
+        const deletedId = action.payload;
+        state.sessions = state.sessions.filter(s => s.session_id !== deletedId);
+        state.deletingSessionId = null;
+        if (state.activeSessionId === deletedId) {
+          state.activeSessionId = state.sessions[0]?.session_id ?? null;
+          state.messages = [];
+          state.streamingText = '';
+          state.isStreaming = false;
+        }
+      })
+      .addCase(deleteSessionThunk.rejected, (state) => {
+        state.deletingSessionId = null;
+      })
+      // toggleSaveSession
+      .addCase(toggleSaveSessionThunk.pending, (state, action) => {
+        state.togglingSessionId = action.meta.arg.sessionId;
+      })
+      .addCase(toggleSaveSessionThunk.fulfilled, (state, action) => {
+        const { sessionId, isSaved } = action.payload;
+        const session = state.sessions.find(s => s.session_id === sessionId);
+        if (session) session.is_saved = isSaved;
+        state.togglingSessionId = null;
+      })
+      .addCase(toggleSaveSessionThunk.rejected, (state) => {
+        state.togglingSessionId = null;
       });
   },
 });
